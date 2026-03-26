@@ -11,7 +11,7 @@ st.set_page_config(page_title="IA Slide Generator", layout="wide")
 # --- FONCTION DE GÉNÉRATION IA ---
 def generate_slide_content(api_key, image_file, title, layout_type, lang):
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('models/gemini-1.5-flash-latest')
     
     # Adapter le prompt selon le nombre de colonnes
     num_cols = 1 if "1" in layout_type else (2 if "2" in layout_type else 3)
