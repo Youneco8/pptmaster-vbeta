@@ -1,88 +1,99 @@
 import streamlit as st
 import pandas as pd
 from pptx import Presentation
+from pptx.util import Inches
 import google.generativeai as genai
+from PIL import Image
+import io
 
-# Configuration de la page
-st.set_page_config(page_title="Générateur PPT IA", layout="wide")
+st.set_page_config(page_title="IA Slide Generator", layout="wide")
 
-st.title("🚀 Générateur de Présentation Intelligent")
-st.info("Étape 1 : Chargez vos fichiers de base (Excel + Template PPT)")
+# --- FONCTION DE GÉNÉRATION IA ---
+def generate_slide_content(api_key, image_file, title, layout_type, lang):
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # Adapter le prompt selon le nombre de colonnes
+    num_cols = 1 if "1" in layout_type else (2 if "2" in layout_type else 3)
+    
+    prompt = f"""
+    Analyse cette image pour un slide PowerPoint dont le titre est "{title}".
+    La langue de rédaction doit être : {lang}.
+    Génère une analyse professionnelle diviseé en exactement {num_cols} blocs de texte.
+    Sépare chaque bloc par le marqueur "---BLOCK---".
+    Chaque bloc doit contenir des bullet points et une petite conclusion.
+    """
+    
+    img = Image.open(image_file)
+    response = model.generate_content([prompt, img])
+    return response.text.split("---BLOCK---")
 
-# --- ZONE D'UPLOAD INITIALE ---
+# --- INTERFACE ---
+st.title("🪄 Créateur de Slides Automatique")
+
 col1, col2 = st.columns(2)
 with col1:
-    excel_file = st.file_uploader("Fichier Excel (slide_num, action_title)", type=['xlsx'])
+    excel_file = st.file_uploader("1. Excel (slide_num, action_title)", type=['xlsx'])
 with col2:
-    template_file = st.file_uploader("Template PowerPoint (.pptx)", type=['pptx'])
+    template_file = st.file_uploader("2. Template PPT (.pptx)", type=['pptx'])
 
-# Initialisation des variables de session (pour garder en mémoire vos choix)
-if 'current_step' not in st.session_state:
-    st.session_state.current_step = 0
-if 'slides_data' not in st.session_state:
-    st.session_state.slides_data = []
+if 'current_step' not in st.session_state: st.session_state.current_step = 0
+if 'slides_data' not in st.session_state: st.session_state.slides_data = []
 
-# --- TRAITEMENT SI EXCEL CHARGÉ ---
 if excel_file and template_file:
     df = pd.read_excel(excel_file)
-    
-    # Détection simplifiée de la langue (peut être améliorée via IA plus tard)
     first_title = str(df['action_title'].iloc[0]).lower()
-    # Logique simple de détection
-    detected_lang = "Français" if any(word in first_title for word in ["le", "la", "les", "et", "analyse"]) else "Anglais"
+    detected_lang = "Français" if any(w in first_title for w in ["le", "la", "analyse", "projet"]) else "Anglais"
     
-    st.success(f"Langue détectée : **{detected_lang}** | Nombre de slides prévus : **{len(df)}**")
+    st.sidebar.success(f"Langue : {detected_lang}")
     
-    # --- LE TUNNEL (Étape 2) ---
     current_idx = st.session_state.current_step
-    
     if current_idx < len(df):
         row = df.iloc[current_idx]
-        st.write("---")
-        st.subheader(f"Configuration du Slide {current_idx + 1} / {len(df)}")
-        st.write(f"**Titre prévu :** {row['action_title']}")
+        st.subheader(f"Slide {current_idx + 1} : {row['action_title']}")
         
-        # Champs de saisie pour ce slide
-        img = st.file_uploader(f"Upload visuel pour Slide {current_idx + 1}", type=['png', 'jpg', 'jpeg'], key=f"img_{current_idx}")
-        layout_choice = st.selectbox("Choisir la disposition", ["1 bloc de texte", "2 colonnes", "3 colonnes"], key=f"lay_{current_idx}")
+        img = st.file_uploader("Image du slide", type=['png', 'jpg'], key=f"img_{current_idx}")
+        layout = st.selectbox("Disposition", ["1 bloc", "2 colonnes", "3 colonnes"], key=f"lay_{current_idx}")
         
-        col_btn1, col_btn2 = st.columns(2)
-        
-        with col_btn1:
-            if st.button("Slide Suivant ➡️"):
-                if img:
-                    # On enregistre les données
-                    st.session_state.slides_data.append({
-                        "title": row['action_title'],
-                        "image": img,
-                        "layout": layout_choice
-                    })
-                    st.session_state.current_step += 1
-                    st.rerun()
-                else:
-                    st.warning("Veuillez uploader une image avant de continuer.")
-        
-        with col_btn2:
-            if st.button("✅ Valider et Terminer maintenant"):
-                if img:
-                    st.session_state.slides_data.append({
-                        "title": row['action_title'],
-                        "image": img,
-                        "layout": layout_choice
-                    })
-                st.session_state.current_step = 999 # On force la fin
-                st.rerun()
+        c1, c2 = st.columns(2)
+        if c1.button("Suivant ➡️") and img:
+            st.session_state.slides_data.append({"title": row['action_title'], "img": img, "lay": layout})
+            st.session_state.current_step += 1
+            st.rerun()
+        if c2.button("✅ Terminer ici") and img:
+            st.session_state.slides_data.append({"title": row['action_title'], "img": img, "lay": layout})
+            st.session_state.current_step = 999
+            st.rerun()
 
-    # --- ÉTAPE FINALE : GÉNÉRATION ---
+    # --- GÉNÉRATION FINALE ---
     if st.session_state.current_step >= len(df) or st.session_state.current_step == 999:
-        st.write("---")
-        st.balloons()
-        st.header("Prêt pour la génération !")
-        st.write(f"Vous avez configuré {len(st.session_state.slides_data)} slides.")
-        
-        api_key = st.text_input("Entrez votre clé API Google Gemini pour lancer l'IA :", type="password")
-        
-        if st.button("🪄 Générer le PowerPoint Final"):
-            st.write("Traitement en cours... (L'IA analyse vos images)")
-            # Ici on ajoutera la logique python-pptx et l'appel à l'IA Gemini
-            st.info("Logique de génération en cours de construction pour la prochaine étape.")
+        api_key = st.text_input("Clé API Google Gemini", type="password")
+        if st.button("Lancer la génération du PPTX") and api_key:
+            prs = Presentation(template_file)
+            progress = st.progress(0)
+            
+            for i, data in enumerate(st.session_state.slides_data):
+                # Choisir le layout (0, 1 ou 2 selon votre template)
+                lay_idx = 0 if "1" in data['lay'] else (1 if "2" in data['lay'] else 2)
+                slide = prs.slides.add_slide(prs.slide_layouts[lay_idx])
+                
+                # Remplir le titre
+                slide.shapes.title.text = data['title']
+                
+                # Appel IA pour le contenu
+                texts = generate_slide_content(api_key, data['img'], data['title'], data['lay'], detected_lang)
+                
+                # Remplir les zones de texte (Placeholders)
+                # On suppose que l'image est le 1er placeholder et les textes suivent
+                for j, txt in enumerate(texts):
+                    try:
+                        # On cherche les zones de texte vides dans le slide
+                        slide.placeholders[j+1].text = txt.strip()
+                    except: pass
+                
+                progress.progress((i + 1) / len(st.session_state.slides_data))
+            
+            # Sauvegarde et téléchargement
+            ppt_out = io.BytesIO()
+            prs.save(ppt_out)
+            st.download_button("📥 Télécharger votre présentation", data=ppt_out.getvalue(), file_name="presentation_ia.pptx")
